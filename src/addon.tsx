@@ -12,6 +12,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 
 function BoursoImportView({ ctx }: { ctx: AddonContext }) {
   const [status, setStatus] = useState<string>("En attente d'un fichier...");
+  const [errorLog, setErrorLog] = useState<{ fileName: string; message: string }[]>([]);
   const [extractedText, setExtractedText] = useState<string>('');
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
 
@@ -20,128 +21,144 @@ function BoursoImportView({ ctx }: { ctx: AddonContext }) {
     const arrayBuffer = await file.arrayBuffer();
     const typedarray = new Uint8Array(arrayBuffer);
     const loadingTask = pdfjsLib.getDocument({ data: typedarray });
-    
+
     const pdf = await loadingTask.promise;
-    
+
     let fullText = '';
-    
+
     for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
       const page = await pdf.getPage(pageNum);
       const textContent = await page.getTextContent();
-      
+
       const pageText = textContent.items
         // @ts-ignore - Le type TextItem de PDF.js possède 'str' mais TS le cherche parfois ailleurs
         .map((item) => item.str)
         .join(' ');
-        
+
       fullText += pageText + '\n';
     }
-    
+
     return fullText;
   };
 
   // Gestionnaire d'événement à la sélection du fichier
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
+    const files = event.target.files;
+    if (!files || files.length === 0) return;
+
+    const filesArray = Array.from(files);
 
     try {
       setIsProcessing(true);
-      setStatus('Analyse du PDF en cours...');
-      setExtractedText('');
-      
-      // 1. On lit le texte
-      const rawText = await extractTextFromPDF(file);
-      setExtractedText(rawText);
+      setErrorLog([]);
 
-      // 2. On analyse le texte avec notre nouveau moteur
-      const transactionData = parseBoursoText(rawText);
-      
-      if (!transactionData) {
-        setStatus("Impossible d'extraire les données. S'agit-il bien d'un avis d'opéré Boursorama ?");
-        return;
-      }
+      // On prépare des compteurs pour le résumé final
+      let successCount = 0;
+      let duplicateCount = 0;
+      let errorCount = 0;
 
-      setStatus(`Opération trouvée : ${transactionData.type} de ${transactionData.quantity} ${transactionData.assetName}. Vérification...`);
+      // Les données globales dont on a besoin une seule fois
+      const accounts = await ctx.api.accounts.getAll();
+      const existingActivities = await ctx.api.activities.getAll();
+      const selectedAccountId = accounts[0]?.id;
 
-      // On doit d'abord récupérer les comptes existants pour avoir un accountId
-      const accounts = await ctx.api.accounts.getAll(); // (ou .list() selon ce que l'auto-complétion te dit)
-      
-      if (!accounts || accounts.length === 0) {
-        setStatus("❌ Erreur : Vous n'avez aucun compte (PEA/CTO) créé dans Wealthfolio.");
-        return;
-      }
-
-      const selectedAccountId = accounts[0].id;
-      
-      // 1. Le dictionnaire de traduction
       const ISIN_TO_TICKER: Record<string, string> = {
         "FR0013412020": "PAEEM", // Amundi "PAEEM"
         "LU1681043599": "CW8",  // Amundi MSCI World
+        "IE0002XZSHO1": "WPEA" // iShares MSCI World 
       };
 
-      const ticker = ISIN_TO_TICKER[transactionData.isin] || transactionData.isin;
-
-      // 2. On récupère tout l'historique de tes activités
-      const existingActivities = await ctx.api.activities.getAll();
-      
-      // On vérifie les doublons
-      const isDuplicate = existingActivities.some((act: any) => {
-        // 1. On coupe l'heure pour ne garder que la date (YYYY-MM-DD)
-        const isSameDate = act.date.startsWith(transactionData.date);
-        
-        // 2. On utilise le vrai nom de variable (activityType)
-        const isSameType = act.activityType === transactionData.type;
-        
-        // 3. On convertit la quantité texte de Wealthfolio en Nombre pour comparer
-        const isSameQuantity = Number(act.quantity) === transactionData.quantity;
-
-        return isSameDate && isSameType && isSameQuantity;
-      });
-
-      if (isDuplicate) {
-        setStatus("⚠️ Cette transaction existe déjà dans votre portefeuille ! Importation ignorée.");
+      if (!selectedAccountId) {
+        setStatus("❌ Erreur : Vous n'avez aucun compte créé dans Wealthfolio.");
+        setIsProcessing(false);
         return;
       }
 
-      // 3. On cherche une ancienne transaction de cet actif pour lui voler son UUID
-      const pastActivity = existingActivities.find((act: any) => 
-        act.assetSymbol === ticker || act.assetSymbol === transactionData.isin
-      );
+      for (let i = 0; i < filesArray.length; i++) {
+        const file = filesArray[i];
 
-      if (!pastActivity) {
-        // Si c'est la toute première fois de ta vie que tu achètes cet ETF, Wealthfolio bloque l'API.
-        setStatus(`⚠️ Nouvel actif détecté (${ticker}). Veuillez l'ajouter manuellement une première fois dans Wealthfolio, puis relancez le PDF.`);
-        return;
-      }
+        // Mise à jour de l'UI pour faire patienter l'utilisateur
+        setStatus(`Traitement du fichier ${i + 1} sur ${filesArray.length} : ${file.name}...`);
 
-      // On récupère l'UUID généré par Wealthfolio
-      const realAssetId = pastActivity.assetId;
+        try {
+          // 1. Lecture et extraction
+          const rawText = await extractTextFromPDF(file);
+          const transactionData = parseBoursoText(rawText);
 
-      
-      // 4. L'injection chirurgicale
-      setStatus("Création de l'activité en cours...");
-      
-      await ctx.api.activities.create({
-        accountId: selectedAccountId,
-        activityType: transactionData.type,
-        activityDate: transactionData.date,
-        quantity: transactionData.quantity,
-        unitPrice: transactionData.unitPrice,
-        currency: transactionData.currency,
-        fee: transactionData.fee,
-        isDraft: false,
-        comment: `Automatique via BoursoImport : ${transactionData.assetName}`,
-        asset: {
-          asset_id: realAssetId, // On lui donne l'UUID exact de la base de données
-          id: realAssetId,       // (Au cas où il l'appelle juste 'id')
-          symbol: ticker         // Et on lui confirme que c'est bien PAEEM
+          if (!transactionData) {
+            ctx.api.logger.warn(`Impossible d'analyser le fichier : ${file.name}`);
+            setErrorLog(prev => [...prev, { fileName: file.name, message: "Format du PDF non reconnu ou illisible." }]);
+            errorCount++;
+            continue; // On passe au fichier suivant sans crasher
+          }
+
+          const ticker = ISIN_TO_TICKER[transactionData.isin] || transactionData.isin;
+
+          const pastActivity = existingActivities.find((act: any) =>
+            act.assetSymbol === ticker || act.assetSymbol === transactionData.isin
+          );
+
+          if (!pastActivity) {
+            ctx.api.logger.warn(`Actif inconnu (${ticker}) pour le fichier ${file.name}.`);
+            setErrorLog(prev => [...prev, { fileName: file.name, message: `Actif inconnu (${ticker}). Ajoutez-le manuellement une première fois.` }]);
+            errorCount++;
+            continue;
+          }
+          const realAssetId = pastActivity.assetId;
+
+          // 3. Vérification des doublons
+          const isDuplicate = existingActivities.some((act: any) => {
+            const isSameDate = act.date.startsWith(transactionData.date);
+            const isSameType = act.activityType === transactionData.type;
+            const isSameQuantity = Number(act.quantity) === transactionData.quantity;
+            return isSameDate && isSameType && isSameQuantity;
+          });
+
+          if (isDuplicate) {
+            duplicateCount++;
+            continue;
+          }
+
+          // 4. L'injection finale
+          await ctx.api.activities.create({
+            accountId: selectedAccountId,
+            activityType: transactionData.type,
+            activityDate: transactionData.date,
+            quantity: transactionData.quantity,
+            unitPrice: transactionData.unitPrice,
+            currency: transactionData.currency,
+            fee: transactionData.fee,
+            isDraft: false,
+            comment: `BoursoImport : ${transactionData.assetName}`,
+            asset: {
+              asset_id: realAssetId,
+              id: realAssetId,
+              symbol: ticker
+            }
+          } as any);
+
+          // Si on arrive ici, c'est un succès !
+          successCount++;
+
+          // On met à jour notre tableau local pour que le prochain fichier 
+          // de la boucle sache que celui-ci vient d'être ajouté (évite les doublons dans le même lot)
+          existingActivities.push({
+            date: transactionData.date,
+            activityType: transactionData.type,
+            quantity: transactionData.quantity.toString(),
+            assetId: realAssetId,
+            assetSymbol: ticker
+          });
+        } catch (fileError: any) {
+          setErrorLog(prev => [...prev, { fileName: file.name, message: fileError.message || "Erreur technique inattendue." }]);
+          console.error(`Erreur sur le fichier ${file.name}:`, fileError);
+          errorCount++;
         }
-      } as any);
+      }
 
-      setStatus("✅ Succès absolu ! L'activité est dans votre portefeuille.");
-      ctx.api.logger.info(`Nouvelle activité importée avec succès ${JSON.stringify(transactionData)}`);
-      
+      // 5. Le rapport final
+      setStatus(`✅ Terminé ! ${successCount} importés, ${duplicateCount} ignorés (doublons), ${errorCount} en erreur.`)
+
     } catch (error) {
       console.error(error);
       ctx.api.logger.error(`Erreur lors de la lecture du PDF ${JSON.stringify(error)}`);
@@ -159,24 +176,42 @@ function BoursoImportView({ ctx }: { ctx: AddonContext }) {
             <Icons.Blocks className="h-6 w-6" />
             <h1 className="text-2xl font-semibold">BoursoImport</h1>
           </div>
-          
+
           <p className="text-muted-foreground mb-6">
             Sélectionnez un avis d'opéré Boursorama au format PDF pour en extraire le texte brut.
           </p>
 
           <div className="mb-6">
-            <input 
-              type="file" 
-              accept="application/pdf" 
+            <input
+              type="file"
+              accept="application/pdf"
+              multiple
               onChange={handleFileUpload}
               disabled={isProcessing}
               className="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-primary/10 file:text-primary hover:file:bg-primary/20 cursor-pointer disabled:opacity-50"
             />
           </div>
 
-          <div className="text-sm font-medium mb-4">
-            Statut : <span className={isProcessing ? "text-blue-500" : "text-green-600"}>{status}</span>
-          </div>
+          {/* Le statut global */}
+          {status && (
+            <div className="mt-4 text-sm font-medium">
+              {status}
+            </div>
+          )}
+
+          {/* Le journal d'erreurs détaillé */}
+          {(
+            <div className="mt-4 p-4 bg-red-50 text-red-700 rounded-md border border-red-200 text-sm text-left">
+              <h3 className="font-bold mb-2">⚠️ Fichiers en erreur ({errorLog.length}) :</h3>
+              <ul className="list-disc pl-5 space-y-1">
+                {errorLog.map((err, idx) => (
+                  <li key={idx}>
+                    <strong>{err.fileName}</strong> : {err.message}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           {/* Affichage du texte brut extrait pour t'aider à créer tes Regex */}
           {extractedText && (
