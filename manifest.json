@@ -1,7 +1,7 @@
 {
   "id": "boursoimport",
   "name": "BoursoImport",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "A Wealthfolio addon for BoursoImport",
   "author": "Jerome Lemaire",
   "main": "dist/addon.js",

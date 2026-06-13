@@ -200,7 +200,7 @@ function BoursoImportView({ ctx }: { ctx: AddonContext }) {
           )}
 
           {/* Le journal d'erreurs détaillé */}
-          {(
+          {errorLog.length > 0 && (
             <div className="mt-4 p-4 bg-red-50 text-red-700 rounded-md border border-red-200 text-sm text-left">
               <h3 className="font-bold mb-2">⚠️ Fichiers en erreur ({errorLog.length}) :</h3>
               <ul className="list-disc pl-5 space-y-1">
