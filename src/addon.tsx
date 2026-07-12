@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
 import type { AddonContext } from '@wealthfolio/addon-sdk';
 import { Card, CardContent, Icons } from '@wealthfolio/ui';
 import { parseBoursoText } from './parser';
@@ -148,7 +149,7 @@ function BoursoImportView({ ctx }: { ctx: AddonContext }) {
             quantity: transactionData.quantity.toString(),
             assetId: realAssetId,
             assetSymbol: ticker
-          });
+          } as any);
         } catch (fileError: any) {
           setErrorLog(prev => [...prev, { fileName: file.name, message: fileError.message || "Erreur technique inattendue." }]);
           console.error(`Erreur sur le fichier ${file.name}:`, fileError);
@@ -230,20 +231,25 @@ export default function enable(ctx: AddonContext) {
   const sidebarItem = ctx.sidebar.addItem({
     id: 'boursoimport',
     label: 'BoursoImport',
-    icon: <Icons.Blocks className="h-5 w-5" />,
+    icon: 'invoice',
     route: '/addon/boursoimport',
     order: 100,
   });
 
   // Add a route
-  const Wrapper = () => <BoursoImportView ctx={ctx} />;
+  let root: Root | null = null;
   ctx.router.add({
     path: '/addon/boursoimport',
-    component: React.lazy(() => Promise.resolve({ default: Wrapper })),
+    render: ({ root: routeRoot }) => {
+      root ??= createRoot(routeRoot);
+      root.render(<BoursoImportView ctx={ctx} />);
+    },
   });
 
   // Cleanup on disable
   ctx.onDisable(() => {
+    root?.unmount();
+    root = null;
     try {
       sidebarItem.remove();
     } catch (err) {

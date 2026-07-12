@@ -5,13 +5,23 @@
   "description": "A Wealthfolio addon for BoursoImport",
   "author": "Jerome Lemaire",
   "main": "dist/addon.js",
-  "sdkVersion": "1.0.0",
+  "sdkVersion": "3.6.1",
   "enabled": true,
   "permissions": [
     {
       "category": "ui",
-      "functions": ["sidebar.addItem", "activities:write", "activities:read", "accounts:read", "assets:read"],
-      "purpose": "Add navigation items to the sidebar"
+      "functions": ["sidebar.addItem", "router.add"],
+      "purpose": "Add a navigation item and page for BoursoImport"
+    },
+    {
+      "category": "accounts",
+      "functions": ["getAll"],
+      "purpose": "List accounts to select the import destination"
+    },
+    {
+      "category": "activities",
+      "functions": ["getAll", "create"],
+      "purpose": "Detect duplicate transactions and import parsed activities"
     }
   ],
   "keywords": ["wealthfolio", "addon"],
