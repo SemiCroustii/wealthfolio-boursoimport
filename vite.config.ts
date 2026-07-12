@@ -26,6 +26,7 @@ export default defineConfig({
     outDir: 'dist',
     minify: true,
     sourcemap: false,
+    assetsInlineLimit: 0,
     rollupOptions: {
       external: hostProvidedDependencies,
     },

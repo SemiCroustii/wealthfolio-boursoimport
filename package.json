@@ -1,6 +1,6 @@
 {
   "name": "wealthfolio-boursoimport-addon",
-  "version": "1.0.3",
+  "version": "1.0.7",
   "description": "A Wealthfolio addon for BoursoImport",
   "type": "module",
   "main": "dist/addon.js",

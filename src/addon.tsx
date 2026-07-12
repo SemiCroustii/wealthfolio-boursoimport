@@ -6,10 +6,16 @@ import { parseBoursoText } from './parser';
 
 // Imports pour la lecture du PDF
 import * as pdfjsLib from 'pdfjs-dist';
-// Configuration du Worker spécifique pour Vite
-import pdfWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
+// L'addon tourne dans une iframe sandboxée : le CSP interdit tout fetch/XHR
+// (connect-src 'none') et un Worker ne peut pas charger un script depuis une URL
+// réseau (origine nulle). Le code du worker doit donc être disponible localement
+// (embarqué dans addon.js au build) puis chargé via un Blob URL.
+import pdfWorkerSource from 'pdfjs-dist/build/pdf.worker.min.mjs?raw';
 
-pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
+const pdfWorkerBlobUrl = URL.createObjectURL(
+  new Blob([pdfWorkerSource], { type: 'application/javascript' })
+);
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerBlobUrl;
 
 function BoursoImportView({ ctx }: { ctx: AddonContext }) {
   const [status, setStatus] = useState<string>("En attente d'un fichier...");
@@ -21,7 +27,10 @@ function BoursoImportView({ ctx }: { ctx: AddonContext }) {
   const extractTextFromPDF = async (file: File): Promise<string> => {
     const arrayBuffer = await file.arrayBuffer();
     const typedarray = new Uint8Array(arrayBuffer);
-    const loadingTask = pdfjsLib.getDocument({ data: typedarray });
+    // useWasm désactivé : le décodeur d'images WASM optionnel de PDF.js se charge via
+    // un import() dynamique que le sandbox de l'addon ne peut pas résoudre. Nos PDF
+    // sont des relevés textuels, ce codec n'est pas nécessaire.
+    const loadingTask = pdfjsLib.getDocument({ data: typedarray, useWasm: false });
 
     const pdf = await loadingTask.promise;
 
