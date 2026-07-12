@@ -14,7 +14,7 @@
     "dev": "vite build --watch",
     "dev:server": "wealthfolio dev",
     "clean": "rm -rf dist",
-    "package": "mkdir -p dist && zip -r dist/$npm_package_name-$npm_package_version.zip manifest.json dist/ assets/ README.md",
+    "package": "C:\\Windows\\System32\\tar.exe -a -c -f dist/%npm_package_name%-%npm_package_version%.zip manifest.json dist/addon.js README.md",
     "bundle": "pnpm clean && pnpm build && pnpm package",
     "lint": "tsc --noEmit",
     "type-check": "tsc --noEmit"
@@ -34,7 +34,6 @@
     "@types/react-dom": "^19.1.1",
     "@vitejs/plugin-react": "^5.0.2",
     "@wealthfolio/addon-dev-tools": "^3.6.1",
-    "rollup-plugin-external-globals": "^0.13.0",
     "tailwindcss": "^4.1.13",
     "typescript": "^5.9.2",
     "vite": "^7.1.5"
